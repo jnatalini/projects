@@ -1,0 +1,5 @@
+ticker,quantity,avg_cost,asset_type,notes
+AAPL,10,145.2,STOCK,Core holding
+MSFT,5,260.0,STOCK,
+VTI,15,210.0,ETF,Broad US equity
+TLT,8,100.5,ETF,Long-term bonds

@@ -1,0 +1,19 @@
+base_currency: USD
+benchmark: SPY
+risk_profile: Balanced
+quote_history_period: 1y
+thresholds:
+  high_weight_pct: 0.25
+  watch_weight_pct: 0.15
+  high_volatility: 0.35
+  high_drawdown: 0.2
+  bullish_momentum: 0.05
+  bearish_momentum: -0.05
+  neutral_band: 0.01
+  high_beta: 1.2
+  low_beta: 0.8
+  high_expense_ratio: 0.0075
+cache:
+  quote_ttl_minutes: 15
+  fundamentals_ttl_minutes: 1440
+  cache_dir: ~/.cache/portfolio_analyzer

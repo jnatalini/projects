@@ -12,6 +12,9 @@ import pandas as pd
 import yaml
 import yfinance as yf
 from pydantic import BaseModel, Field, field_validator
+from datetime import datetime
+
+
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 LOGGER = logging.getLogger("portfolio-cli")
@@ -863,6 +866,9 @@ def parse_interactive() -> PortfolioInput:
 # Entry point
 # -----------------------------------------------------------------------------
 def main():
+    now = datetime.now()
+    #print(now)               # full timestamp
+    print(now.strftime("%Y-%m-%d %H:%M:%S"))  # formatted version
     parser = argparse.ArgumentParser(description="Single-file portfolio analyzer (Yahoo Finance).")
     parser.add_argument("--portfolio", type=Path, help="Path to portfolio CSV.")
     parser.add_argument("--config", type=Path, help="Optional YAML config.")

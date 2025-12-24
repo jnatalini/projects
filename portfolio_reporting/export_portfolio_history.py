@@ -174,8 +174,10 @@ def main() -> None:
         raise SystemExit("No portfolio snapshots found in the provided log.")
 
     timestamp_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
-    portfolio_path = add_timestamp_to_filename(args.portfolio_output, timestamp_suffix)
-    holdings_path = add_timestamp_to_filename(args.holdings_output, timestamp_suffix)
+    #portfolio_path = add_timestamp_to_filename(args.portfolio_output, timestamp_suffix)
+    #holdings_path = add_timestamp_to_filename(args.holdings_output, timestamp_suffix)
+    portfolio_path = add_timestamp_to_filename(args.portfolio_output, "")
+    holdings_path = add_timestamp_to_filename(args.holdings_output, "")
 
     export_csv(
         portfolio_records,

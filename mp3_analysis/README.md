@@ -33,6 +33,12 @@ Enable fingerprinting and HTML report:
 python music_dedupe.py --root-dir /path/to/music --fingerprint --html-report
 ```
 
+Slower but more accurate analysis (fingerprints all tracks):
+
+```bash
+python music_dedupe.py --root-dir /path/to/music --thorough
+```
+
 Interactive mode to override recommendations:
 
 ```bash
@@ -63,6 +69,7 @@ python music_dedupe.py --root-dir /path/to/music --resume
 - `--dry-run`: No deletions (reports only). The script never deletes files directly.
 - `--include-subdirs/--no-subdirs`: Include subdirectories (default: include).
 - `--fingerprint`: Use audio fingerprinting if `fpcalc` is installed.
+- `--thorough`: Slower but more accurate; fingerprints all tracks when possible.
 - `--interactive`: Prompt for which duplicate to keep.
 - `--resume`: Resume from the last saved state.
 - `--html-report`: Generate `duplicates_report.html`.

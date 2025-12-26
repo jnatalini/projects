@@ -501,6 +501,41 @@ def apply_fingerprints(
     return updated_groups
 
 
+def compute_fingerprints_for_tracks(
+    tracks: List[TrackInfo],
+    cache_path: Path,
+    logger: logging.Logger,
+    workers: int,
+) -> None:
+    cache = load_cache(cache_path, logger)
+    fingerprint_cache = {entry.get("path"): entry.get("audio_fingerprint") for entry in cache.values() if isinstance(entry, dict)}
+
+    def ensure_fingerprint(track: TrackInfo) -> Optional[str]:
+        cached = fingerprint_cache.get(track.path)
+        if cached:
+            track.audio_fingerprint = cached
+            return cached
+        fingerprint = compute_fingerprint(track.path)
+        if fingerprint:
+            fingerprint_cache[track.path] = fingerprint
+            track.audio_fingerprint = fingerprint
+            cache_entry = track.to_dict()
+            cache_entry["audio_fingerprint"] = fingerprint
+            cache[file_cache_key(Path(track.path))] = cache_entry
+        return fingerprint
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(ensure_fingerprint, track): track for track in tracks}
+        for future in as_completed(futures):
+            track = futures[future]
+            try:
+                track.audio_fingerprint = future.result()
+            except Exception as exc:
+                logger.warning("Fingerprint failed for %s (%s)", track.path, exc)
+
+    save_cache(cache_path, cache, logger)
+
+
 def metadata_completeness(track: TrackInfo) -> float:
     return track.tag_fields / 8.0
 
@@ -621,6 +656,32 @@ def duplicate_detection(
     if use_fingerprint and fingerprint_available():
         stage2_groups = apply_fingerprints(stage2_groups, cache_path, logger, workers)
     return stage2_groups
+
+
+def duplicate_detection_thorough(
+    tracks: List[TrackInfo],
+    config: Dict[str, object],
+    cache_path: Path,
+    logger: logging.Logger,
+    workers: int,
+) -> List[List[TrackInfo]]:
+    if not fingerprint_available():
+        logger.warning("Thorough mode requested but fpcalc not available; falling back to metadata analysis.")
+        return duplicate_detection(tracks, config, False, cache_path, logger, workers)
+
+    compute_fingerprints_for_tracks(tracks, cache_path, logger, workers)
+    fingerprint_groups: Dict[str, List[TrackInfo]] = defaultdict(list)
+    missing_fingerprint = []
+    for track in tracks:
+        if track.audio_fingerprint:
+            fingerprint_groups[track.audio_fingerprint].append(track)
+        else:
+            missing_fingerprint.append(track)
+
+    duplicates = [group for group in fingerprint_groups.values() if len(group) > 1]
+    if missing_fingerprint:
+        duplicates.extend(duplicate_detection(missing_fingerprint, config, False, cache_path, logger, workers))
+    return duplicates
 
 
 def generate_reports(
@@ -744,6 +805,11 @@ def main() -> int:
     parser.add_argument("--include-subdirs", dest="include_subdirs", action="store_true", default=True)
     parser.add_argument("--no-subdirs", dest="include_subdirs", action="store_false")
     parser.add_argument("--fingerprint", action="store_true", help="Enable audio fingerprinting if available.")
+    parser.add_argument(
+        "--thorough",
+        action="store_true",
+        help="Slower but more accurate analysis (fingerprint all tracks when possible).",
+    )
     parser.add_argument("--interactive", action="store_true", help="Confirm recommendations interactively.")
     parser.add_argument("--resume", action="store_true", help="Resume from previous state if available.")
     parser.add_argument("--html-report", action="store_true", help="Generate HTML duplicates report.")
@@ -791,7 +857,11 @@ def main() -> int:
     logger.info("Artists: %s", len(library))
 
     logger.info("Detecting duplicates")
-    duplicate_groups = duplicate_detection(tracks, config, args.fingerprint, cache_path, logger, args.workers)
+    use_fingerprint = args.fingerprint or args.thorough
+    if args.thorough:
+        duplicate_groups = duplicate_detection_thorough(tracks, config, cache_path, logger, args.workers)
+    else:
+        duplicate_groups = duplicate_detection(tracks, config, use_fingerprint, cache_path, logger, args.workers)
 
     recommendations: Dict[str, str] = {}
     score_details: Dict[str, Dict[str, float]] = {}

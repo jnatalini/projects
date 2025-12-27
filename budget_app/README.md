@@ -61,6 +61,12 @@ Generate a report vs budget for a specific month:
 python budget_tool.py --mode report --report-month 2025-12
 ```
 
+Generate reports for all months with both actuals and budgets:
+
+```bash
+python budget_tool.py --mode report --report-all-months
+```
+
 Disable interactive corrections:
 
 ```bash
@@ -87,6 +93,7 @@ python budget_tool.py --input-image /path/to/screenshot.png --month 2025-12 --no
 - `--corrections`: CSV or JSON file with category/amount overrides.
 - `--no-interactive`: Skip interactive correction prompts.
 - `--report-month`: Month for the budget vs actual report.
+- `--report-all-months`: Generate reports for every month that has both actuals and a budget.
 
 ## Outputs
 

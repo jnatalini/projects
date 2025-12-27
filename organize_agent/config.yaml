@@ -1,0 +1,48 @@
+pictures_dirs:
+  - /home/jose/Pictures/Inbox
+music_dirs:
+  - /home/jose/Music/Inbox
+ebooks_dirs:
+  - /home/jose/Books/Inbox
+other_dirs:
+  - /home/jose/Downloads
+
+extensions:
+  pictures: [".jpg", ".jpeg", ".png", ".heic", ".webp"]
+  music: [".mp3", ".flac", ".m4a", ".wav"]
+  ebooks: [".epub", ".pdf", ".mobi", ".azw3"]
+
+organize:
+  auto_organize: false
+  dry_run: true
+  require_confirm: false
+  pictures_target: /home/jose/Pictures
+  music_target: /home/jose/Music
+  ebooks_target: /home/jose/Books
+  pictures_template: "{year}/{month}/{day}/{name}"
+  music_template: "{artist}/{album}/{track:02d} - {title}{ext}"
+  ebooks_template: "{author}/{series_or_title}/{title}{ext}"
+  normalize_filenames: true
+
+index:
+  backend: sqlite
+  path: /home/jose/.agent_index/agent.db
+
+reports:
+  dir: /home/jose/agent_reports
+  daily_time: "02:00"
+
+scan:
+  interval_seconds: 300
+  debounce_seconds: 5
+  use_watchdog: true
+  partial_hash_bytes: 0
+
+resources:
+  max_workers: 4
+  max_cpu_load: 0.0
+
+logging:
+  level: INFO
+  file: /home/jose/.agent_index/agent.log
+  audit_file: /home/jose/.agent_index/audit.log

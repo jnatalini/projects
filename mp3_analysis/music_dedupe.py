@@ -705,8 +705,14 @@ def generate_reports(
     with summary_path.open("w", encoding="utf-8") as handle:
         json.dump([track.to_dict() for track in tracks], handle, indent=2)
 
+    csv_fields = list(tracks[0].to_dict().keys()) if tracks else []
     with summary_csv.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(tracks[0].to_dict().keys()) if tracks else [])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=csv_fields,
+            quoting=csv.QUOTE_MINIMAL,
+            escapechar="\\",
+        )
         writer.writeheader()
         for track in tracks:
             writer.writerow(track.to_dict())
@@ -735,15 +741,26 @@ def generate_reports(
     with dup_json.open("w", encoding="utf-8") as handle:
         json.dump(duplicates_payload, handle, indent=2)
 
+    dup_fields = list(duplicates_payload[0].keys()) if duplicates_payload else []
     with dup_csv.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(duplicates_payload[0].keys()) if duplicates_payload else [])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=dup_fields,
+            quoting=csv.QUOTE_MINIMAL,
+            escapechar="\\",
+        )
         writer.writeheader()
         for row in duplicates_payload:
             writer.writerow(row)
 
     low_quality = [track for track in tracks if track.bitrate and track.bitrate < 128]
     with quality_csv.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(tracks[0].to_dict().keys()) if tracks else [])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=csv_fields,
+            quoting=csv.QUOTE_MINIMAL,
+            escapechar="\\",
+        )
         writer.writeheader()
         for track in low_quality:
             writer.writerow(track.to_dict())

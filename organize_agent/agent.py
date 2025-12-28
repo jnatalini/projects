@@ -97,6 +97,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "debounce_seconds": 5,
         "use_watchdog": True,
         "partial_hash_bytes": 0,
+        "progress_log_every": 500,
     },
     "resources": {
         "max_workers": 4,
@@ -153,27 +154,33 @@ def setup_logging(config: Dict[str, Any], cli_log_file: Optional[str], cli_level
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    handler = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=5 * 1024 * 1024, backupCount=5
-    )
-    handler.setFormatter(formatter)
-    handler.setLevel(getattr(logging, level, logging.INFO))
-    logger.addHandler(handler)
-
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
     console.setLevel(getattr(logging, level, logging.INFO))
     logger.addHandler(console)
 
+    try:
+        handler = logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=5 * 1024 * 1024, backupCount=5
+        )
+        handler.setFormatter(formatter)
+        handler.setLevel(getattr(logging, level, logging.INFO))
+        logger.addHandler(handler)
+    except OSError as exc:
+        logger.warning("Failed to open log file %s: %s", log_path, exc)
+
     audit_path = Path(log_cfg.get("audit_file", "audit.log")).expanduser()
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     audit_logger = logging.getLogger("audit")
     audit_logger.setLevel(logging.INFO)
-    audit_handler = logging.handlers.RotatingFileHandler(
-        audit_path, maxBytes=5 * 1024 * 1024, backupCount=3
-    )
-    audit_handler.setFormatter(formatter)
-    audit_logger.addHandler(audit_handler)
+    try:
+        audit_handler = logging.handlers.RotatingFileHandler(
+            audit_path, maxBytes=5 * 1024 * 1024, backupCount=3
+        )
+        audit_handler.setFormatter(formatter)
+        audit_logger.addHandler(audit_handler)
+    except OSError as exc:
+        logger.warning("Failed to open audit log file %s: %s", audit_path, exc)
 
 
 def now_ts() -> str:
@@ -229,203 +236,215 @@ class Indexer:
     def __init__(self, db_path: str) -> None:
         self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
         self._init_schema()
 
     def _init_schema(self) -> None:
-        cur = self.conn.cursor()
-        cur.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS files (
-                id INTEGER PRIMARY KEY,
-                path TEXT UNIQUE,
-                media_type TEXT,
-                size INTEGER,
-                mtime REAL,
-                hash TEXT,
-                added_timestamp TEXT,
-                last_seen TEXT,
-                removed INTEGER DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS pictures_metadata (
-                file_id INTEGER PRIMARY KEY,
-                camera TEXT,
-                resolution TEXT,
-                date_taken TEXT,
-                tags TEXT,
-                FOREIGN KEY(file_id) REFERENCES files(id)
-            );
-            CREATE TABLE IF NOT EXISTS music_metadata (
-                file_id INTEGER PRIMARY KEY,
-                artist TEXT,
-                album TEXT,
-                title TEXT,
-                track INTEGER,
-                duration REAL,
-                bitrate INTEGER,
-                genre TEXT,
-                FOREIGN KEY(file_id) REFERENCES files(id)
-            );
-            CREATE TABLE IF NOT EXISTS ebooks_metadata (
-                file_id INTEGER PRIMARY KEY,
-                title TEXT,
-                author TEXT,
-                series TEXT,
-                language TEXT,
-                pages INTEGER,
-                FOREIGN KEY(file_id) REFERENCES files(id)
-            );
-            CREATE TABLE IF NOT EXISTS duplicates (
-                group_id INTEGER,
-                file_id INTEGER,
-                PRIMARY KEY (group_id, file_id)
-            );
-            CREATE TABLE IF NOT EXISTS state (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
-            CREATE INDEX IF NOT EXISTS idx_files_media ON files(media_type);
-            CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
-            CREATE INDEX IF NOT EXISTS idx_music_artist ON music_metadata(artist);
-            CREATE INDEX IF NOT EXISTS idx_pictures_date ON pictures_metadata(date_taken);
-            """
-        )
-        self.conn.commit()
-
-    def close(self) -> None:
-        self.conn.close()
-
-    def reset(self) -> None:
-        cur = self.conn.cursor()
-        cur.executescript(
-            """
-            DELETE FROM duplicates;
-            DELETE FROM pictures_metadata;
-            DELETE FROM music_metadata;
-            DELETE FROM ebooks_metadata;
-            DELETE FROM files;
-            DELETE FROM state;
-            """
-        )
-        self.conn.commit()
-
-    def get_file(self, path: str) -> Optional[sqlite3.Row]:
-        cur = self.conn.cursor()
-        cur.execute("SELECT * FROM files WHERE path = ?", (path,))
-        return cur.fetchone()
-
-    def upsert_file(self, entry: FileEntry) -> int:
-        cur = self.conn.cursor()
-        existing = self.get_file(entry.path)
-        if existing:
-            cur.execute(
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.executescript(
                 """
-                UPDATE files
-                SET media_type=?, size=?, mtime=?, hash=?, last_seen=?, removed=0
-                WHERE path=?
-                """,
-                (entry.media_type, entry.size, entry.mtime, entry.hash, now_ts(), entry.path),
+                CREATE TABLE IF NOT EXISTS files (
+                    id INTEGER PRIMARY KEY,
+                    path TEXT UNIQUE,
+                    media_type TEXT,
+                    size INTEGER,
+                    mtime REAL,
+                    hash TEXT,
+                    added_timestamp TEXT,
+                    last_seen TEXT,
+                    removed INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS pictures_metadata (
+                    file_id INTEGER PRIMARY KEY,
+                    camera TEXT,
+                    resolution TEXT,
+                    date_taken TEXT,
+                    tags TEXT,
+                    FOREIGN KEY(file_id) REFERENCES files(id)
+                );
+                CREATE TABLE IF NOT EXISTS music_metadata (
+                    file_id INTEGER PRIMARY KEY,
+                    artist TEXT,
+                    album TEXT,
+                    title TEXT,
+                    track INTEGER,
+                    duration REAL,
+                    bitrate INTEGER,
+                    genre TEXT,
+                    FOREIGN KEY(file_id) REFERENCES files(id)
+                );
+                CREATE TABLE IF NOT EXISTS ebooks_metadata (
+                    file_id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    author TEXT,
+                    series TEXT,
+                    language TEXT,
+                    pages INTEGER,
+                    FOREIGN KEY(file_id) REFERENCES files(id)
+                );
+                CREATE TABLE IF NOT EXISTS duplicates (
+                    group_id INTEGER,
+                    file_id INTEGER,
+                    PRIMARY KEY (group_id, file_id)
+                );
+                CREATE TABLE IF NOT EXISTS state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+                CREATE INDEX IF NOT EXISTS idx_files_media ON files(media_type);
+                CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
+                CREATE INDEX IF NOT EXISTS idx_music_artist ON music_metadata(artist);
+                CREATE INDEX IF NOT EXISTS idx_pictures_date ON pictures_metadata(date_taken);
+                """
             )
             self.conn.commit()
-            return int(existing["id"])
-        cur.execute(
-            """
-            INSERT INTO files (path, media_type, size, mtime, hash, added_timestamp, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                entry.path,
-                entry.media_type,
-                entry.size,
-                entry.mtime,
-                entry.hash,
-                now_ts(),
-                now_ts(),
-            ),
-        )
-        self.conn.commit()
-        return int(cur.lastrowid)
+
+    def close(self) -> None:
+        with self._lock:
+            self.conn.close()
+
+    def reset(self) -> None:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.executescript(
+                """
+                DELETE FROM duplicates;
+                DELETE FROM pictures_metadata;
+                DELETE FROM music_metadata;
+                DELETE FROM ebooks_metadata;
+                DELETE FROM files;
+                DELETE FROM state;
+                """
+            )
+            self.conn.commit()
+
+    def get_file(self, path: str) -> Optional[sqlite3.Row]:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM files WHERE path = ?", (path,))
+            return cur.fetchone()
+
+    def upsert_file(self, entry: FileEntry) -> int:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM files WHERE path = ?", (entry.path,))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute(
+                    """
+                    UPDATE files
+                    SET media_type=?, size=?, mtime=?, hash=?, last_seen=?, removed=0
+                    WHERE path=?
+                    """,
+                    (entry.media_type, entry.size, entry.mtime, entry.hash, now_ts(), entry.path),
+                )
+                self.conn.commit()
+                return int(existing["id"])
+            cur.execute(
+                """
+                INSERT INTO files (path, media_type, size, mtime, hash, added_timestamp, last_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry.path,
+                    entry.media_type,
+                    entry.size,
+                    entry.mtime,
+                    entry.hash,
+                    now_ts(),
+                    now_ts(),
+                ),
+            )
+            self.conn.commit()
+            return int(cur.lastrowid)
 
     def mark_removed(self, path: str) -> None:
-        cur = self.conn.cursor()
-        cur.execute(
-            "UPDATE files SET removed=1, last_seen=? WHERE path=?",
-            (now_ts(), path),
-        )
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "UPDATE files SET removed=1, last_seen=? WHERE path=?",
+                (now_ts(), path),
+            )
+            self.conn.commit()
 
     def update_metadata(self, file_id: int, media_type: str, meta: Dict[str, Any]) -> None:
-        cur = self.conn.cursor()
-        if media_type == "picture":
-            cur.execute(
-                """
-                INSERT OR REPLACE INTO pictures_metadata
-                (file_id, camera, resolution, date_taken, tags)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    file_id,
-                    meta.get("camera"),
-                    meta.get("resolution"),
-                    meta.get("date_taken"),
-                    meta.get("tags"),
-                ),
-            )
-        elif media_type == "music":
-            cur.execute(
-                """
-                INSERT OR REPLACE INTO music_metadata
-                (file_id, artist, album, title, track, duration, bitrate, genre)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    file_id,
-                    meta.get("artist"),
-                    meta.get("album"),
-                    meta.get("title"),
-                    meta.get("track"),
-                    meta.get("duration"),
-                    meta.get("bitrate"),
-                    meta.get("genre"),
-                ),
-            )
-        elif media_type == "ebook":
-            cur.execute(
-                """
-                INSERT OR REPLACE INTO ebooks_metadata
-                (file_id, title, author, series, language, pages)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    file_id,
-                    meta.get("title"),
-                    meta.get("author"),
-                    meta.get("series"),
-                    meta.get("language"),
-                    meta.get("pages"),
-                ),
-            )
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.cursor()
+            if media_type == "picture":
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO pictures_metadata
+                    (file_id, camera, resolution, date_taken, tags)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_id,
+                        meta.get("camera"),
+                        meta.get("resolution"),
+                        meta.get("date_taken"),
+                        meta.get("tags"),
+                    ),
+                )
+            elif media_type == "music":
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO music_metadata
+                    (file_id, artist, album, title, track, duration, bitrate, genre)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_id,
+                        meta.get("artist"),
+                        meta.get("album"),
+                        meta.get("title"),
+                        meta.get("track"),
+                        meta.get("duration"),
+                        meta.get("bitrate"),
+                        meta.get("genre"),
+                    ),
+                )
+            elif media_type == "ebook":
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO ebooks_metadata
+                    (file_id, title, author, series, language, pages)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_id,
+                        meta.get("title"),
+                        meta.get("author"),
+                        meta.get("series"),
+                        meta.get("language"),
+                        meta.get("pages"),
+                    ),
+                )
+            self.conn.commit()
 
     def update_state(self, key: str, value: str) -> None:
-        cur = self.conn.cursor()
-        cur.execute(
-            "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, value)
-        )
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, value)
+            )
+            self.conn.commit()
 
     def get_state(self, key: str) -> Optional[str]:
-        cur = self.conn.cursor()
-        cur.execute("SELECT value FROM state WHERE key = ?", (key,))
-        row = cur.fetchone()
-        return row["value"] if row else None
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT value FROM state WHERE key = ?", (key,))
+            row = cur.fetchone()
+            return row["value"] if row else None
 
     def query(self, sql: str, params: Tuple[Any, ...] = ()) -> List[sqlite3.Row]:
-        cur = self.conn.cursor()
-        cur.execute(sql, params)
-        return cur.fetchall()
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(sql, params)
+            return cur.fetchall()
 
 
 class MetadataExtractor:
@@ -617,10 +636,23 @@ class Reporter:
             """,
             (yesterday,),
         )
+        detail_rows = self.indexer.query(
+            """
+            SELECT media_type, path, added_timestamp
+            FROM files
+            WHERE added_timestamp >= ? AND removed=0
+            ORDER BY added_timestamp DESC
+            """,
+            (yesterday,),
+        )
         with report_path.open("w", encoding="utf-8") as f:
             f.write("New content report (last 24h)\n")
             for row in rows:
                 f.write(f"{row['media_type']}: {row['count']}\n")
+            f.write("\nFiles\n")
+            for row in detail_rows:
+                filename = Path(row["path"]).name
+                f.write(f"{row['added_timestamp']} {row['media_type']} {filename} {row['path']}\n")
         return report_path
 
     def generate_storage_report(self) -> Path:
@@ -633,10 +665,22 @@ class Reporter:
             GROUP BY media_type
             """
         )
+        detail_rows = self.indexer.query(
+            """
+            SELECT media_type, path, size
+            FROM files
+            WHERE removed=0
+            ORDER BY media_type, size DESC
+            """
+        )
         with report_path.open("w", encoding="utf-8") as f:
             f.write("Storage usage report\n")
             for row in rows:
                 f.write(f"{row['media_type']}: {row['total_size'] or 0} bytes\n")
+            f.write("\nFiles\n")
+            for row in detail_rows:
+                filename = Path(row["path"]).name
+                f.write(f"{row['media_type']} {row['size'] or 0} {filename} {row['path']}\n")
         return report_path
 
     def generate_duplicates_report(self) -> Path:
@@ -654,6 +698,18 @@ class Reporter:
             f.write("Duplicates report\n")
             for row in rows:
                 f.write(f"Hash {row['hash']} has {row['count']} duplicates\n")
+                file_rows = self.indexer.query(
+                    """
+                    SELECT path
+                    FROM files
+                    WHERE hash=? AND removed=0
+                    ORDER BY path
+                    """,
+                    (row["hash"],),
+                )
+                for file_row in file_rows:
+                    filename = Path(file_row["path"]).name
+                    f.write(f"  {filename} {file_row['path']}\n")
         return report_path
 
     def generate_missing_metadata_report(self) -> Path:
@@ -675,7 +731,8 @@ class Reporter:
         with report_path.open("w", encoding="utf-8") as f:
             f.write("Missing metadata report\n")
             for row in rows:
-                f.write(f"{row['media_type']}: {row['path']}\n")
+                filename = Path(row["path"]).name
+                f.write(f"{row['media_type']}: {filename} {row['path']}\n")
         return report_path
 
 
@@ -741,6 +798,15 @@ class Agent:
         self.extractor = MetadataExtractor(config)
         self.organizer = Organizer(config)
         self.reporter = Reporter(self.indexer, config)
+        self._progress_lock = threading.Lock()
+        self._active_scan_id = 0
+        self._scan_total = 0
+        self._scan_processed = 0
+        self._scan_started_at = 0.0
+        self._reindex_pending = reindex
+        self._progress_log_every = max(1, int(config["scan"].get("progress_log_every", 500)))
+        self._active_scan_label = "Scan"
+        self._scan_discovery_done = False
         self.watch_paths = self._gather_watch_paths()
         self.watcher = FileWatcher(self.watch_paths, self.queue, config)
         self.executor = concurrent.futures.ThreadPoolExecutor(
@@ -762,7 +828,7 @@ class Agent:
         self._install_signals()
         self.watcher.start()
         if self.once:
-            self.scan_all()
+            self.scan_all(wait=True)
             self.reporter.generate_all()
             self.shutdown()
             return
@@ -815,17 +881,62 @@ class Agent:
             if event == "deleted":
                 self.indexer.mark_removed(path)
                 continue
-            self.executor.submit(self.process_path, Path(path))
+            self.executor.submit(self.process_path, Path(path), 0)
 
-    def scan_all(self) -> None:
-        self.logger.info("Scanning watched directories.")
+    def scan_all(self, wait: bool = False) -> None:
+        scan_label = "Reindex" if self._reindex_pending else "Scan"
+        with self._progress_lock:
+            self._active_scan_id += 1
+            scan_id = self._active_scan_id
+            self._scan_total = 0
+            self._scan_processed = 0
+            self._scan_started_at = time.time()
+            self._reindex_pending = False
+            self._active_scan_label = scan_label
+            self._scan_discovery_done = False
+        self.logger.info("%s started.", scan_label)
         for root in self.watch_paths:
             if not root.exists():
                 self.logger.warning("Watched directory missing: %s", root)
                 continue
             for path in self._walk(root):
-                self.executor.submit(self.process_path, path)
+                with self._progress_lock:
+                    if scan_id == self._active_scan_id:
+                        self._scan_total += 1
+                        if self._scan_total % self._progress_log_every == 0:
+                            self.logger.info(
+                                "%s discovery: %d files found so far.",
+                                scan_label,
+                                self._scan_total,
+                            )
+                if wait:
+                    self._process_path_inner(path)
+                    processed = 0
+                    total = 0
+                    elapsed = 0.0
+                    with self._progress_lock:
+                        if scan_id == self._active_scan_id:
+                            self._scan_processed += 1
+                            processed = self._scan_processed
+                            total = self._scan_total
+                            elapsed = time.time() - self._scan_started_at
+                    if processed and processed % self._progress_log_every == 0:
+                        self.logger.info(
+                            "%s progress: %d files processed in %.1fs.",
+                            scan_label,
+                            processed,
+                            elapsed,
+                        )
+                else:
+                    self.executor.submit(self.process_path, path, scan_id)
+        with self._progress_lock:
+            total = self._scan_total if scan_id == self._active_scan_id else 0
+            if scan_id == self._active_scan_id:
+                self._scan_discovery_done = True
+        self.logger.info("%s discovery complete: %d files queued.", scan_label, total)
         self.indexer.update_state("last_scan", now_ts())
+        if wait:
+            self._finalize_scan(scan_id, scan_label)
 
     def _walk(self, root: Path) -> Iterable[Path]:
         for entry in os.scandir(root):
@@ -835,7 +946,13 @@ class Agent:
             elif entry.is_file(follow_symlinks=False):
                 yield path
 
-    def process_path(self, path: Path) -> None:
+    def process_path(self, path: Path, scan_id: int = 0) -> None:
+        try:
+            self._process_path_inner(path)
+        finally:
+            self._mark_processed(scan_id)
+
+    def _process_path_inner(self, path: Path) -> None:
         debounce = self.config["scan"].get("debounce_seconds", 5)
         if not self._wait_for_stable(path, debounce):
             return
@@ -870,6 +987,53 @@ class Agent:
             self.indexer.update_metadata(file_id, media_type, meta)
         if media_type in ("picture", "music", "ebook"):
             self._maybe_organize(path, media_type, meta)
+
+    def _mark_processed(self, scan_id: int) -> None:
+        if scan_id <= 0:
+            return
+        scan_label = self._active_scan_label
+        with self._progress_lock:
+            if scan_id != self._active_scan_id:
+                return
+            self._scan_processed += 1
+            processed = self._scan_processed
+            total = self._scan_total
+            elapsed = time.time() - self._scan_started_at
+            if processed % self._progress_log_every == 0 or (total and processed >= total):
+                if total:
+                    pct = (processed / total) * 100
+                    self.logger.info(
+                        "%s progress: %d/%d files (%.1f%%) processed in %.1fs.",
+                        scan_label,
+                        processed,
+                        total,
+                        pct,
+                        elapsed,
+                    )
+                else:
+                    self.logger.info(
+                        "%s progress: %d files processed in %.1fs.",
+                        scan_label,
+                        processed,
+                        elapsed,
+                    )
+            if total and self._scan_discovery_done and processed >= total:
+                self._finalize_scan(scan_id, scan_label)
+
+    def _finalize_scan(self, scan_id: int, scan_label: str) -> None:
+        with self._progress_lock:
+            if scan_id != self._active_scan_id:
+                return
+            elapsed = time.time() - self._scan_started_at
+            total = self._scan_total
+            processed = self._scan_processed
+        self.logger.info(
+            "%s complete: %d/%d files processed in %.1fs.",
+            scan_label,
+            processed,
+            total,
+            elapsed,
+        )
 
     def _wait_for_stable(self, path: Path, debounce_seconds: int) -> bool:
         if debounce_seconds <= 0:
@@ -959,12 +1123,23 @@ def run_search(indexer: Indexer, query: str) -> None:
 
 def main() -> None:
     args = parse_args()
-    config = load_config(args.config)
+    config_path = args.config
+    if not config_path:
+        for candidate in ("config.yaml", "config.yml", "config.json"):
+            if Path(candidate).exists():
+                config_path = candidate
+                break
+    config = load_config(config_path)
     setup_logging(config, args.log_file, args.log_level)
     logger = logging.getLogger("main")
-    logger.info("Starting agent with config: %s", args.config or "default")
+    logger.info("Starting agent with config: %s", config_path or "default")
 
     agent = Agent(config, once=args.once, reindex=args.reindex)
+    if not agent.watch_paths:
+        logger.warning(
+            "No watch paths configured; add directories to config or pass --config. "
+            "Use --once to run a single scan and exit."
+        )
     if args.list_media:
         run_list(agent.indexer, args.list_media, args.since)
         return
@@ -972,6 +1147,7 @@ def main() -> None:
         run_search(agent.indexer, args.search)
         return
     if args.report:
+        agent.scan_all(wait=True)
         agent.reporter.generate_all()
         return
     agent.start()

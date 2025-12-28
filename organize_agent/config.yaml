@@ -14,7 +14,7 @@ extensions:
 
 organize:
   auto_organize: false
-  dry_run: true
+  dry_run: false
   require_confirm: false
   pictures_target: /home/jose/Pictures
   music_target: /home/jose/Music
@@ -30,13 +30,15 @@ index:
 
 reports:
   dir: /home/jose/agent_reports
-  daily_time: "02:00"
+  daily_time: "23:55"
 
 scan:
   interval_seconds: 300
   debounce_seconds: 5
   use_watchdog: true
   partial_hash_bytes: 0
+  progress_log_every: 5
+
 
 resources:
   max_workers: 4

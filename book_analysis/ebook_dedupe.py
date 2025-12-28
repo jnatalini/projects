@@ -144,6 +144,8 @@ def extract_metadata_epub(path):
         meta["authors"] = book.get_metadata("DC", "creator")
         meta["language"] = _first_meta(book, "DC", "language")
         meta["publisher"] = _first_meta(book, "DC", "publisher")
+        meta["date"] = _first_meta(book, "DC", "date")
+        meta["year"] = parse_year(meta.get("date"))
         meta["subjects"] = [m[0] for m in book.get_metadata("DC", "subject")]
         meta["series"] = _first_meta(book, "calibre", "series")
         meta["series_index"] = _first_meta(book, "calibre", "series_index")
@@ -183,6 +185,8 @@ def extract_metadata_pdf(path):
         info = getattr(reader, "metadata", None) or {}
         meta["title"] = getattr(info, "title", None) or info.get("/Title")
         meta["author"] = getattr(info, "author", None) or info.get("/Author")
+        meta["date"] = getattr(info, "creation_date", None) or info.get("/CreationDate")
+        meta["year"] = parse_year(meta.get("date"))
         meta["page_count"] = len(reader.pages)
         meta["text_sample"] = _pdf_text_sample(reader)
         meta["pdf_text"] = bool(meta["text_sample"])
@@ -272,6 +276,18 @@ def normalize_metadata(meta):
         "subjects": meta.get("subjects") or [],
     }
     return norm
+
+
+def parse_year(value):
+    if not value:
+        return None
+    if hasattr(value, "year"):
+        return value.year
+    text = str(value)
+    match = re.search(r"(19|20)\\d{2}", text)
+    if match:
+        return int(match.group(0))
+    return None
 
 
 def scan_files(root_dir, formats, excludes, follow_symlinks, logger):
@@ -529,6 +545,22 @@ def write_summary(report_dir, stats):
     return path
 
 
+def write_books_report(report_dir, index):
+    path = os.path.join(report_dir, "books_report.csv")
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["author", "title", "series", "year", "path"])
+        for item in index:
+            writer.writerow([
+                item.get("author"),
+                item.get("title"),
+                item.get("series"),
+                item.get("year"),
+                item.get("path"),
+            ])
+    return path
+
+
 def generate_delete_script(report_dir, groups, shell="sh"):
     path = os.path.join(report_dir, "delete_duplicates.sh")
     lines = ["#!/bin/sh", "set -e"]
@@ -593,6 +625,7 @@ def index_worker(path, formats, config, existing_entry):
         "language": norm.get("language"),
         "publisher": norm.get("publisher"),
         "subjects": norm.get("subjects"),
+        "year": meta.get("year"),
         "page_count": meta.get("page_count"),
         "size_bytes": size_bytes,
         "mtime": mtime,
@@ -696,6 +729,7 @@ def main(argv):
 
     logger.info("Index built; errors=%d", errors)
     write_index(report_dir, index)
+    write_books_report(report_dir, index)
 
     priority = config.get("format_priority", DEFAULT_FORMAT_PRIORITY)
     priority_map = {fmt: i for i, fmt in enumerate(priority)}

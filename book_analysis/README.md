@@ -56,6 +56,7 @@ python ebook_dedupe.py --root-dir ~/Books --interactive
 
 - `reports/library_index.json`: master index of scanned files.
 - `reports/duplicates_report.json` and `reports/duplicates_report.csv`: duplicate groups with recommendations.
+- `reports/books_report.csv`: all scanned books with basic metadata (author/title/series/year).
 - `reports/summary.txt`: totals and top authors/formats.
 - `reports/delete_duplicates.sh`: optional delete script.
 - `ebook_dedupe.log`: detailed logs (rotated).
